@@ -8,7 +8,7 @@ g_K = 36.0  # (mS/cm^2)
 g_L = 0.3  # (mS/cm^2)
 E_Na = 50.0  # (mV)
 E_K = -77.0  # (mV)
-E_L = -55  # (mV)
+E_L = -55.0  # (mV)
 
 # Initial conditions
 V0 = -65.0  # initial membrane potential (mV)
@@ -72,7 +72,17 @@ m_values = sol_rk[:, 1]
 h_values = sol_rk[:, 2]
 n_values = sol_rk[:, 3]
 
-# Plot the results
+# Extract currents
+iNa = [g_Na * m**3 * h * (v - E_Na) for m,h,v in zip(m_values, h_values, V_values)]
+iK = [g_K * n**4 * (v - E_K) for v,n in zip(V_values, n_values)]
+iL = [g_L * (v - E_L) for v in V_values]
+
+# Bunch everything together
+channels = ["Na", "K", "Leakage"]
+E = [E_Na, E_K, E_L]
+i = [iNa, iK, iL]
+
+# Plot the membrane potential
 plt.figure(figsize=(10, 6))
 plt.plot(t_eval, V_values, label='Membrane Potential (mV)')
 plt.plot(t_eval, [ext_current(t) for t in t_eval], label="Input current (uA)")
@@ -83,14 +93,65 @@ plt.legend()
 plt.grid()
 plt.show()
 
+# Plot the currents
 plt.figure(figsize=(10, 6))
 plt.plot(t_eval, [ext_current(t) for t in t_eval], label="Input current (uA)")
-plt.plot(t_eval, [g_Na * m**3 * h * (v - E_Na) * 1.0e-1 for m,h,v in zip(m_values, h_values, V_values)], label="Sodium channel current (10uA)")
-plt.plot(t_eval, [g_K * n**4 * (v - E_K) * 1.0e-1 for v,n in zip(V_values, n_values)], label="Potassium channel current (10uA)")
-plt.plot(t_eval, [g_L * (v - E_L) for v in V_values], label="Leak current (uA)")
+for j in range(3):
+    plt.plot(t_eval, i[j], label = f"{channels[j]} channel current (uA)")
 plt.xlabel('Time (ms)')
-plt.ylabel('Membrane Potential (mV)')
+plt.ylabel('Ion channel currents (uA)')
 plt.title('Hodgkin-Huxley Neuron Simulation')
 plt.legend()
 plt.grid()
 plt.show()
+
+one_cycle = np.intersect1d(np.where(t_eval < 70), np.where(t_eval > 60)) # One action potential cycle
+one_cycle = one_cycle.tolist()
+t_one = t_eval[one_cycle]
+
+power = []
+for j in range(3):
+    power.append([ix*(E[j] - v) for v,ix in zip(V_values[one_cycle[0]:one_cycle[-1] + 1], i[j][one_cycle[0]: one_cycle[-1] + 1])])
+
+
+# Plot the instantaneous power
+plt.figure(figsize=(10, 6))
+plt.plot(t_one, [ext_current(t) for t in t_one], label="Input current (uA)")
+for j in range(3):
+    plt.plot(t_one, np.array(power[j])*1.0e-3, label = f"{channels[j]} channel power (uW)")
+plt.xlabel('Time (ms)')
+plt.ylabel('Instantaneous power (uW)')
+plt.title('Hodgkin-Huxley Neuron Simulation for one action cycle')
+plt.legend()
+plt.grid()
+plt.show()
+
+I_ext = []
+for t in t_one:
+    I_ext.append(ext_current(t))
+
+membrane_power = [v*(I - i_Na - i_K - i_L) for v,I,i_Na,i_K,i_L in zip(V_values[one_cycle[0]: one_cycle[-1] + 1], I_ext, iNa[one_cycle[0]: one_cycle[-1] + 1], iK[one_cycle[0]: one_cycle[-1] + 1], iL[one_cycle[0]: one_cycle[-1] + 1])]
+power.append(membrane_power)
+
+# Plot membrane charge/discharge power
+plt.figure(figsize=(10, 6))
+plt.plot(t_one, I_ext, label="Input current (uA)")
+plt.plot(t_one, np.array(power[3])*1e-3, label = "Membrance charge/discharge power (uW)")
+plt.xlabel('Time (ms)')
+plt.ylabel('Power (uW)')
+plt.title('Hodgkin-Huxley Neuron Simulation for one action cycle')
+plt.legend()
+plt.grid()
+plt.show()
+
+# Integrating the power
+timestep = t_one[1] - t_one[0]
+ener = [0,0,0,0] # Na, K, l, membrane
+for t in range(len(t_one)):
+    for i in range(4):
+        ener[i] += power[i][t]*timestep
+
+print(f"Na channel energy spent = {ener[0]} pJ")
+print(f"K channel energy spent = {ener[1]} pJ")
+print(f"Leakage channel energy spent = {ener[2]} pJ")
+print(f"Membrane capacitance channel energy spent = {ener[3]} pJ")
