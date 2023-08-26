@@ -1,123 +1,96 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import math
 
-class HH_neuron:
-    def __init__(self, V = 0, n = 0, m = 0, h = 0):
-        self.C = 1e-6
-        self.ENa = 50e-3
-        self.EK = -77e-3
-        self.El = -55e-3
-        self.gNA = 120e-3
-        self.gK = 36e-3
-        self.gl = 0.3e-3
-        self.V = V # Need to tune this. NEEDS TO BE GIVEN IN MILLIVOLTS
-        self.n = n # Need to tune this
-        self.m = m # Need to tune this
-        self.h = h # Need to tune this
-        self.dV = 0
-        self.dn = 0
-        self.dm = 0
-        self.dh = 0
-    
-    def calculate_difference(self, I_ext):
-        """
-        Calculates the difference rate and updates the class variables accordingly
-        """
+# Constants
+C_m = 1.0  # (uF/cm^2)
+g_Na = 120.0  # (mS/cm^2)
+g_K = 36.0  # (mS/cm^2)
+g_L = 0.3  # (mS/cm^2)
+E_Na = 50.0  # (mV)
+E_K = -77.0  # (mV)
+E_L = -55  # (mV)
 
-        epsilon = 1e-5 # prevent divide by zero errors
-        # V is multiplied by 1000 to convert it into mV
-        self.V *= 1e3
-        a_n = (0.01*(self.V + 55))/(1 - math.exp(-(55+self.V)/10) + epsilon)
-        b_n = 0.125*math.exp(-(self.V + 65)/80)
-        a_m = (0.1*(self.V + 40))/(1 - math.exp(-(40+self.V)/10) + epsilon)
-        b_m = 4*math.exp(-0.0556*(self.V + 65))
-        a_h = 0.07*math.exp(-0.05*(self.V + 65))
-        b_h = 1/(1 + math.exp(-0.1*(self.V + 35)) + epsilon)
-        self.V *= 1e-3
+# Initial conditions
+V0 = -65.0  # initial membrane potential (mV)
+m0 = 0.07 # IDK these values were hit and trial 
+h0 = 0.4  
+n0 = 0.4  
 
-        self.dn = a_n*(1-self.n) - b_n*self.n
-        self.dm = a_m*(1-self.m) - b_m*self.m
-        self.dh = a_h*(1-self.h) - b_h*self.h
+initial_state = np.array([V0, m0, h0, n0])
 
-        self.dV = (I_ext - self.iNa - self.iK - self.il)/self.C
-        
-    def update_temp(self, t):
-        """
-        Update the value of V and other variables crudely
-        Done to implement Runge-Kutta  
-        """
+# Time variables
+T = 30 # (ms)
+deltaT = 0.01 # (ms)
+num = int(5*T/deltaT)
+t_span = (0, 5*T)  # simulation time span (ms)
+t_eval = np.linspace(*t_span, num=num)
 
-        self.V = self.V + self.dV*t
-        self.n = self.n + self.dn*t
-        self.m = self.m + self.dm*t
-        self.h = self.h + self.dh*t
+# External current
+def ext_current(t):
+    return 15.0 if 2*T <= t < 3*T else 0.0
 
-    def update(self,I,t):
-        """
-        Update all variables according to Runge-Kutta fourth order
-        """
+# Hodgkin-Huxley model equations
+def hodgkin_huxley(t, y):
+    V, m, h, n = y
 
-        og_state = [self.V, self.n, self.m, self.h]
+    alpha_n = 0.01 * (V + 55) / (1 - np.exp(-0.1 * (V + 55)))
+    beta_n = 0.125 * np.exp(-0.0125 * (V + 65))
+    alpha_m = 0.1 * (V + 40) / (1 - np.exp(-0.1 * (V + 40)))
+    beta_m = 4.0 * np.exp(-0.0556 * (V + 65))
+    alpha_h = 0.07 * np.exp(-0.05 * (V + 65))
+    beta_h = 1.0 / (1 + np.exp(-0.1 * (V + 35)))
 
-        self.calculate_difference(I)
-        k1 = np.array([self.dV, self.dn, self.dm, self.dh])
+    dVdt = (ext_current(t) - g_Na * m**3 * h * (V - E_Na) - g_K * n**4 * (V - E_K) - g_L * (V - E_L)) / C_m
+    dmdt = alpha_m * (1 - m) - beta_m * m
+    dhdt = alpha_h * (1 - h) - beta_h * h
+    dndt = alpha_n * (1 - n) - beta_n * n
 
-        self.update_temp(t/2)
-        self.calculate_difference(I) # y = y_og + k1*t/2 here. Should we update current here too?
-        k2 = np.array([self.dV, self.dn, self.dm, self.dh])
+    return np.array([dVdt, dmdt, dhdt, dndt])
 
-        self.V, self.n, self.m, self.h = og_state
-        self.update_temp(t/2)
-        self.calculate_difference(I) # y = y_og + k2*t/2 here
-        k3 = np.array([self.dV, self.dn, self.dm, self.dh])
+# Fourth-order Runge-Kutta method
+def runge_kutta_4(func, y0, t_values):
+    h = t_values[1] - t_values[0]
+    y = y0
+    y_values = [y]
 
-        self.V, self.n, self.m, self.h = og_state
-        self.update_temp(t)
-        self.calculate_difference(I) # y = y_og + k3*t here
-        k4 = np.array([self.dV, self.dn, self.dm, self.dh])
+    for t in t_values[:-1]:
+        k1 = h * func(t, y)
+        k2 = h * func(t + 0.5 * h, y + 0.5 * k1)
+        k3 = h * func(t + 0.5 * h, y + 0.5 * k2)
+        k4 = h * func(t + h, y + k3)
+        y = y + (k1 + 2 * k2 + 2 * k3 + k4) / 6.0
+        y_values.append(y)
 
-        self.V, self.n, self.m, self.h = og_state
-        weighted_avg = (k1/6 + k2/3 + k3/3 + k4/6).tolist()
-        self.dV = weighted_avg[0]
-        self.dn = weighted_avg[1]
-        self.dm = weighted_avg[2]
-        self.dh = weighted_avg[3]
-        self.update_temp(t)
-    
-    @property
-    def iNa(self):
-        return self.gNA*self.h*(self.m**3)*(self.V - self.ENa)
-    
-    @property
-    def iK(self):
-        return self.gK*(self.n**4)*(self.V - self.EK)
-    
-    @property
-    def il(self):
-        return self.gl*(self.V - self.El)
-    
-if __name__ == "__main__":
+    return np.array(y_values)
 
-    neuron = HH_neuron(V = -55e-3) # apparently this works
-    V_trace = []
-    T = 30e-3
-    deltaT = 0.01e-3
-    I0 = 15e-6
-    time = np.arange(0,15*T, deltaT)
-    Iext = [I0 if (t < 3*T and t >= 2*T) else 0 for t in time]
+# Solve using Runge-Kutta method
+sol_rk = runge_kutta_4(hodgkin_huxley, initial_state, t_eval)
 
-    for t in range(len(time)):
-        V_trace.append(neuron.V)
-        #neuron.calculate_difference(Iext[0])
-        #neuron.update_temp(deltaT)
-        neuron.update(Iext[t], deltaT)
+# Extract state variables
+V_values = sol_rk[:, 0]
+m_values = sol_rk[:, 1]
+h_values = sol_rk[:, 2]
+n_values = sol_rk[:, 3]
 
-    
-    print(V_trace[-1])
-    print(V_trace[8800])
-    plt.plot(time, V_trace, label = "Membrane potential")
-    plt.legend()
-    plt.show()
+# Plot the results
+plt.figure(figsize=(10, 6))
+plt.plot(t_eval, V_values, label='Membrane Potential (mV)')
+plt.plot(t_eval, [ext_current(t) for t in t_eval], label="Input current (uA)")
+plt.xlabel('Time (ms)')
+plt.ylabel('Membrane Potential (mV)')
+plt.title('Hodgkin-Huxley Neuron Simulation')
+plt.legend()
+plt.grid()
+plt.show()
 
-    
+plt.figure(figsize=(10, 6))
+plt.plot(t_eval, [ext_current(t) for t in t_eval], label="Input current (uA)")
+plt.plot(t_eval, [g_Na * m**3 * h * (v - E_Na) * 1.0e-1 for m,h,v in zip(m_values, h_values, V_values)], label="Sodium channel current (10uA)")
+plt.plot(t_eval, [g_K * n**4 * (v - E_K) * 1.0e-1 for v,n in zip(V_values, n_values)], label="Potassium channel current (10uA)")
+plt.plot(t_eval, [g_L * (v - E_L) for v in V_values], label="Leak current (uA)")
+plt.xlabel('Time (ms)')
+plt.ylabel('Membrane Potential (mV)')
+plt.title('Hodgkin-Huxley Neuron Simulation')
+plt.legend()
+plt.grid()
+plt.show()
